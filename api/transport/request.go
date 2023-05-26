@@ -64,6 +64,10 @@ type Request struct {
 	// override the routing key and service.
 	RoutingDelegate string
 
+       // RoutingLocation is an opaque string location value. The location value
+       // can be set or consumed by the middleware or the load balancer.
+       RoutingLocation string
+
 	// CallerProcedure refers to the name of the rpc procedure from the service making this request.
 	CallerProcedure string
 
@@ -105,6 +109,7 @@ func (r *Request) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	enc.AddString("routingKey", r.RoutingKey)
 	enc.AddString("routingDelegate", r.RoutingDelegate)
 	enc.AddString("callerProcedure", r.CallerProcedure)
+	enc.AddString("routingLocation", r.RoutingLocation)
 	return nil
 }
 

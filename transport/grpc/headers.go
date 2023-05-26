@@ -56,6 +56,10 @@ const (
 	// destined service. This corresponds to the Request.RoutingDelegate attribute.
 	// This header is optional.
 	RoutingDelegateHeader = "rpc-routing-delegate"
+	// RoutingLocationHeader is the header key for the location can be consumed by
+	// the load balancer or the proxy for the destined service. This corresponds to
+	// the Request.RoutingLocation attribute. This header is optional.
+	RoutingLocationHeader = "rpc-routing-location"
 	// EncodingHeader is the header key for the encoding used for the request body.
 	// This corresponds to the Request.Encoding attribute.
 	// If this is not set, content-type will attempt to be read for the encoding per
@@ -93,7 +97,7 @@ const (
 // transport.CanonicalizeHeaderKey
 
 func isReserved(header string) bool {
-	return strings.HasPrefix(strings.ToLower(header), "rpc-")
+	return strings.HasPrefix(strings.ToLower(header), "rpc-") && strings.ToLower(header) != RoutingLocationHeader
 }
 
 // transportRequestToMetadata will populate all reserved and application headers
@@ -108,6 +112,7 @@ func transportRequestToMetadata(request *transport.Request) (metadata.MD, error)
 		addToMetadata(md, RoutingDelegateHeader, request.RoutingDelegate),
 		addToMetadata(md, EncodingHeader, string(request.Encoding)),
 		addToMetadata(md, CallerProcedureHeader, request.CallerProcedure),
+		addToMetadata(md, RoutingLocationHeader, request.RoutingLocation),
 	); err != nil {
 		return md, err
 	}
