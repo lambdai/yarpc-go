@@ -81,6 +81,12 @@ func WithRoutingDelegate(rd string) CallOption {
 	return CallOption(encoding.WithRoutingDelegate(rd))
 }
 
+// WithRoutingDelegate sets the routing delegate for the request.
+func WithRoutingLocation(rl string) CallOption {
+	return CallOption(encoding.WithRoutingLocation(rl))
+}
+
+
 // Call provides information about the current request inside handlers. An
 // instance of Call for the current request can be obtained by calling
 // CallFromContext on the request context.

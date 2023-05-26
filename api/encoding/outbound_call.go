@@ -38,6 +38,7 @@ type OutboundCall struct {
 	shardKey        *string
 	routingKey      *string
 	routingDelegate *string
+	routingLocation *string
 
 	// If non-nil, response headers should be written here.
 	responseHeaders *map[string]string

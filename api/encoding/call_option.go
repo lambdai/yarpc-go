@@ -92,3 +92,15 @@ func (r routingDelegateOption) apply(call *OutboundCall) {
 func WithRoutingDelegate(rd string) CallOption {
 	return CallOption{routingDelegateOption(rd)}
 }
+
+type routingLocationOption string
+
+func (r routingLocationOption) apply(call *OutboundCall) {
+	x := string(r)
+	call.routingLocation = &x
+}
+
+// WithRoutingLocation sets the routing location for the request.
+func WithRoutingLocation(rl string) CallOption {
+	return CallOption{routingLocationOption(rl)}
+}
