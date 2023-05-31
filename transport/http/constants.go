@@ -73,6 +73,8 @@ const (
 	// Request.RoutingDelegate attribute.
 	RoutingDelegateHeader = "Rpc-Routing-Delegate"
 
+	RoutingLocationHeader = "Rpc-Routing-Location"
+
 	// Whether the response body contains an application error.
 	ApplicationStatusHeader = "Rpc-Status"
 
