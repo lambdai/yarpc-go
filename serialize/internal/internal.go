@@ -46,6 +46,7 @@ type RPC struct {
 	ShardKey        *string           `json:"shardKey,omitempty"`
 	RoutingKey      *string           `json:"routingKey,omitempty"`
 	RoutingDelegate *string           `json:"routingDelegate,omitempty"`
+	RoutingLocation *string           `json:"routingLocation,omitempty"`
 	Body            []byte            `json:"body,omitempty"`
 }
 
@@ -823,6 +824,9 @@ func (v *RPC) MarshalLogObject(enc zapcore.ObjectEncoder) (err error) {
 	}
 	if v.RoutingDelegate != nil {
 		enc.AddString("routingDelegate", *v.RoutingDelegate)
+	}
+	if v.routingLocation != nil {
+		enc.AddString("routingLocation", *v.routingLocation)
 	}
 	if v.Body != nil {
 		enc.AddString("body", base64.StdEncoding.EncodeToString(v.Body))

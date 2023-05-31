@@ -93,6 +93,7 @@ func (r *Request) ToRequestMeta() *RequestMeta {
 		ShardKey:        r.ShardKey,
 		RoutingKey:      r.RoutingKey,
 		RoutingDelegate: r.RoutingDelegate,
+		RoutingLocation: r.RoutingLocation,
 		CallerProcedure: r.CallerProcedure,
 	}
 }
@@ -201,6 +202,8 @@ type RequestMeta struct {
 	// override the routing key and service.
 	RoutingDelegate string
 
+	RoutingLocation string
+
 	// CallerProcedure refers to the name of the rpc procedure of the service making this request.
 	CallerProcedure string
 }
@@ -220,6 +223,7 @@ func (r *RequestMeta) ToRequest() *Request {
 		ShardKey:        r.ShardKey,
 		RoutingKey:      r.RoutingKey,
 		RoutingDelegate: r.RoutingDelegate,
+		RoutingLocation: r.RoutingLocation,
 		CallerProcedure: r.CallerProcedure,
 	}
 }

@@ -81,6 +81,9 @@ func (c *OutboundCall) WriteToRequest(ctx context.Context, req *transport.Reques
 	if c.routingDelegate != nil {
 		req.RoutingDelegate = *c.routingDelegate
 	}
+	if c.routingLocation != nil {
+		req.RoutingLocation = *c.routingLocation
+	}
 
 	// NB(abg): context and error are unused for now but we want to leave room
 	// for CallOptions which can fail or modify the context.
@@ -104,6 +107,9 @@ func (c *OutboundCall) WriteToRequestMeta(ctx context.Context, reqMeta *transpor
 	}
 	if c.routingDelegate != nil {
 		reqMeta.RoutingDelegate = *c.routingDelegate
+	}
+	if c.routingLocation != nil {
+		reqMeta.RoutingLocation = *c.routingLocation
 	}
 
 	// NB(abg): context and error are unused for now but we want to leave room
