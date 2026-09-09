@@ -704,7 +704,7 @@ func (o *Outbound) doWithPeer(
 ) (*http.Response, error) {
 	hreq.URL.Host = p.HostPort()
 
-	response, err := sender.Do(hreq.WithContext(ctx))
+	response, err := o.send(ctx, hreq, p, sender)
 	if err != nil {
 		// Workaround borrowed from ctxhttp until
 		// https://github.com/golang/go/issues/17711 is resolved.
@@ -741,6 +741,29 @@ func (o *Outbound) doWithPeer(
 	}
 
 	return response, nil
+}
+
+// send issues hreq to p, routing through the peer's per-connection HTTP/2
+// pool when the outbound is using HTTP/2 and pooling is enabled on the
+// transport; otherwise it falls through to today's shared-client behavior.
+func (o *Outbound) send(ctx context.Context, hreq *http.Request, p *httpPeer, sender sender) (*http.Response, error) {
+	if !o.useHTTP2 || p.pool == nil {
+		return sender.Do(hreq.WithContext(ctx))
+	}
+
+	// conn wraps a *http2.Transport, which -- unlike a raw *http2.ClientConn
+	// -- transparently redials on its own after GOAWAY or a dead connection,
+	// so a RoundTrip error here doesn't mean this pool slot is bad and
+	// doesn't warrant evicting it. pickConn has already reserved the slot
+	// via incInflight (the same manual accounting workaround yarpc's grpc
+	// pool already relies on, since http2.Transport, like grpc.ClientConn,
+	// exposes no stream count); decInflight below releases it.
+	conn, err := p.pool.pickConn()
+	if err != nil {
+		return nil, err
+	}
+	defer conn.decInflight()
+	return conn.transport.RoundTrip(hreq.WithContext(ctx))
 }
 
 // Introspect returns basic status about this outbound.

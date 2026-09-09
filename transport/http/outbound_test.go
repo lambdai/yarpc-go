@@ -1000,6 +1000,99 @@ func TestCallWithHTTP2(t *testing.T) {
 	})
 }
 
+func TestCallWithHTTP2ConnPool(t *testing.T) {
+	const maxConcurrentStreams = 2
+	const numConcurrentCalls = 6
+
+	release := make(chan struct{})
+	var mu sync.Mutex
+	seenConns := make(map[string]struct{})
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		defer req.Body.Close()
+
+		mu.Lock()
+		seenConns[req.RemoteAddr] = struct{}{}
+		mu.Unlock()
+
+		<-release
+		_, err := w.Write([]byte("great success"))
+		assert.NoError(t, err)
+	})
+
+	h2s := &http2.Server{
+		MaxConcurrentStreams: maxConcurrentStreams,
+		IdleTimeout:          defaultIdleConnTimeout,
+	}
+	h1s := httptest.NewUnstartedServer(handler)
+	h1s.Config.Protocols = new(http.Protocols)
+	h1s.Config.Protocols.SetHTTP1(true)
+	h1s.Config.Protocols.SetUnencryptedHTTP2(true)
+	http2.ConfigureServer(h1s.Config, h2s)
+	h1s.Start()
+	t.Cleanup(h1s.Close)
+
+	// A pooled connection is a *http2.Transport, which -- unlike a
+	// *http2.ClientConn -- can't tell the pool the server's real negotiated
+	// MaxConcurrentStreams, so it must be told explicitly to make the
+	// pool's own scale-up logic (rather than *http2.Transport's own,
+	// separate fallback of dialing extra connections when saturated) the
+	// thing this test is actually exercising.
+	httpTransport := NewTransport(EnableHTTP2ConnPool(), HTTP2MaxConns(4),
+		HTTP2MaxConcurrentStreams(maxConcurrentStreams), HTTP2ScaleUpThreshold(0.5))
+	t.Cleanup(func() {
+		if err := httpTransport.Stop(); err != nil {
+			t.Logf("failed to stop transport: %v", err)
+		}
+	})
+
+	out := httpTransport.NewSingleOutbound(h1s.URL, UseHTTP2())
+	require.NoError(t, out.Start(), "failed to start outbound")
+	t.Cleanup(func() {
+		if err := out.Stop(); err != nil {
+			t.Logf("failed to stop outbound: %v", err)
+		}
+	})
+
+	// Fire more concurrent long-lived requests than a single HTTP/2
+	// connection's MaxConcurrentStreams can serve, and confirm they all
+	// succeed and that more than one underlying connection got dialed.
+	var wg sync.WaitGroup
+	errs := make(chan error, numConcurrentCalls)
+	for i := 0; i < numConcurrentCalls; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), testtime.Second*5)
+			defer cancel()
+			_, err := out.Call(ctx, &transport.Request{
+				Caller:    "caller",
+				Service:   "service",
+				Encoding:  raw.Encoding,
+				Procedure: "hello",
+				Body:      strings.NewReader("world"),
+			})
+			errs <- err
+		}()
+	}
+
+	// Give the pool a moment to scale up under load before releasing the
+	// held requests.
+	time.Sleep(200 * testtime.Millisecond)
+	close(release)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		assert.NoError(t, err)
+	}
+
+	mu.Lock()
+	numConns := len(seenConns)
+	mu.Unlock()
+	assert.Greater(t, numConns, 1, "expected the pool to have dialed more than one connection under saturation")
+}
+
 func TestCallSuccess(t *testing.T) {
 	successServer := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, req *http.Request) {
