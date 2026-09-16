@@ -176,6 +176,66 @@ func TestHTTP2PoolMaybeScaleUpSingleFlight(t *testing.T) {
 	streamsWG.Wait()
 }
 
+func TestHTTP2PoolAssumedMaxConcurrentStreamsOverride(t *testing.T) {
+	addr, h2t := newTestH2Server(t, 100, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("ok"))
+	})
+
+	pool := newHTTP2Pool(addr, h2t, defaultHTTP2PoolConfig())
+	defer pool.Close()
+
+	c, err := pool.dial(context.Background())
+	require.NoError(t, err)
+	pool.addConn(c)
+	waitForCondition(t, time.Second, func() bool { return c.maxConcurrentStreams() > 0 })
+
+	assert.EqualValues(t, 100, pool.assumedMaxConcurrentStreams(c),
+		"without an override, the real negotiated value should be used")
+
+	pool.cfg.maxConcurrentStreamsOverride = 5
+	assert.EqualValues(t, 5, pool.assumedMaxConcurrentStreams(c),
+		"an override should replace the real negotiated value")
+}
+
+func TestHTTP2PoolMaybeScaleUpUsesOverride(t *testing.T) {
+	release := make(chan struct{})
+	addr, h2t := newTestH2Server(t, 100, func(w http.ResponseWriter, r *http.Request) {
+		<-release
+		w.Write([]byte("ok"))
+	})
+
+	cfg := defaultHTTP2PoolConfig()
+	cfg.maxConns = 5
+	cfg.scaleUpThreshold = 0.5
+	cfg.maxConcurrentStreamsOverride = 2 // far below the server's real limit of 100
+	pool := newHTTP2Pool(addr, h2t, cfg)
+	defer pool.Close()
+
+	c, err := pool.dial(context.Background())
+	require.NoError(t, err)
+	pool.addConn(c)
+	waitForCondition(t, time.Second, func() bool { return c.maxConcurrentStreams() > 0 })
+
+	var streamsWG sync.WaitGroup
+	streamsWG.Add(1)
+	go func() {
+		defer streamsWG.Done()
+		req, _ := http.NewRequest(http.MethodGet, "https://"+addr+"/", strings.NewReader(""))
+		c.cc.RoundTrip(req)
+	}()
+	waitForCondition(t, time.Second, func() bool { return c.streamsActive() == 1 })
+
+	// 1 active stream against the server's real limit of 100 would never
+	// cross a 0.5 scale-up threshold; against the configured override of 2,
+	// it does.
+	pool.maybeScaleUp(c)
+	waitForCondition(t, time.Second, func() bool { return len(*pool.connsPtr.Load()) == 2 })
+	assert.Len(t, *pool.connsPtr.Load(), 2)
+
+	close(release)
+	streamsWG.Wait()
+}
+
 func TestHTTP2PoolScaleDownHysteresis(t *testing.T) {
 	addr, h2t := newTestH2Server(t, 100, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("ok"))

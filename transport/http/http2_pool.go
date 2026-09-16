@@ -40,6 +40,14 @@ type http2PoolConfig struct {
 	scaleDownGap           float64
 	idleTimeout            time.Duration
 	scalingMonitorInterval time.Duration
+
+	// maxConcurrentStreamsOverride, when non-zero, replaces the peer's
+	// wire-negotiated MaxConcurrentStreams in scaling decisions (see
+	// http2Pool.assumedMaxConcurrentStreams). It has no effect on protocol
+	// safety: dispatch is still gated by http2.ClientConn.CanTakeNewRequest,
+	// which always enforces the real negotiated limit regardless of this
+	// value.
+	maxConcurrentStreamsOverride int32
 }
 
 func defaultHTTP2PoolConfig() http2PoolConfig {
@@ -162,11 +170,26 @@ func leastLoaded(conns []*http2Conn) (*http2Conn, error) {
 	return best, nil
 }
 
+// assumedMaxConcurrentStreams returns the concurrency ceiling to use for c
+// in scaling decisions: the configured maxConcurrentStreamsOverride if set,
+// otherwise c's peer-advertised MaxConcurrentStreams. This value only ever
+// influences when the pool grows or shrinks; actual request dispatch is
+// always gated by the connection's real negotiated limit via
+// http2.ClientConn.CanTakeNewRequest, so an operator-supplied override can
+// make the pool scale more or less eagerly but can never cause it to exceed
+// what the peer actually accepts.
+func (p *http2Pool) assumedMaxConcurrentStreams(c *http2Conn) uint32 {
+	if p.cfg.maxConcurrentStreamsOverride > 0 {
+		return uint32(p.cfg.maxConcurrentStreamsOverride)
+	}
+	return c.maxConcurrentStreams()
+}
+
 // maybeScaleUp dials an additional connection, asynchronously and at most
 // once concurrently, when least is already busy enough that new requests
 // risk queuing behind it.
 func (p *http2Pool) maybeScaleUp(least *http2Conn) {
-	max := least.maxConcurrentStreams()
+	max := p.assumedMaxConcurrentStreams(least)
 	if max == 0 {
 		// No SETTINGS observed yet; nothing to compare against.
 		return
@@ -222,7 +245,7 @@ func (p *http2Pool) maybeScaleDown() {
 	var mostLoaded *http2Conn
 	for _, c := range conns {
 		totalActive += c.streamsActive()
-		totalCapacity += int(c.maxConcurrentStreams())
+		totalCapacity += int(p.assumedMaxConcurrentStreams(c))
 		if mostLoaded == nil || c.streamsActive() > mostLoaded.streamsActive() {
 			mostLoaded = c
 		}
@@ -231,7 +254,7 @@ func (p *http2Pool) maybeScaleDown() {
 		return
 	}
 
-	remainingCapacity := totalCapacity - int(mostLoaded.maxConcurrentStreams())
+	remainingCapacity := totalCapacity - int(p.assumedMaxConcurrentStreams(mostLoaded))
 	if remainingCapacity <= 0 {
 		return
 	}

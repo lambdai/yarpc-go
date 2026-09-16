@@ -304,6 +304,28 @@ func HTTP2MaxConns(n int) TransportOption {
 	}
 }
 
+// HTTP2MaxConcurrentStreamsOverride overrides the concurrency ceiling the
+// pool uses in its scaling decisions, in place of each connection's
+// wire-negotiated MaxConcurrentStreams (from the peer's HTTP/2 SETTINGS
+// frame). Use this when the peer's advertised value is unavailable (e.g.
+// before its first SETTINGS frame arrives) or does not reflect the ceiling
+// you want the pool to scale against.
+//
+// This does not affect protocol safety: a request is still only ever
+// dispatched on a connection that *http2.ClientConn.CanTakeNewRequest
+// reports as able to accept it, which always enforces the peer's real
+// negotiated limit regardless of this override. Setting this too high just
+// makes the pool slower to open new connections under load; setting it too
+// low just makes it open more connections than necessary.
+//
+// Zero (the default) disables the override and uses each connection's real
+// negotiated value.
+func HTTP2MaxConcurrentStreamsOverride(n int32) TransportOption {
+	return func(options *transportOptions) {
+		options.http2PoolCfg.maxConcurrentStreamsOverride = n
+	}
+}
+
 // HTTP2ScaleUpThreshold sets the fraction of a connection's negotiated
 // MaxConcurrentStreams that must be in use before the pool dials an
 // additional connection to the same peer.
