@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 
 	"github.com/golang/mock/gomock"
 	"github.com/opentracing/opentracing-go"
@@ -826,14 +827,12 @@ func TestCallWithHTTP2(t *testing.T) {
 			},
 		)
 		h2s := &http2.Server{
+			NewWriteScheduler: func() http2.WriteScheduler {
+				return http2.NewPriorityWriteScheduler(nil)
+			},
 			IdleTimeout: defaultIdleConnTimeout,
 		}
-		h1s := httptest.NewUnstartedServer(handler)
-		h1s.Config.Protocols = new(http.Protocols)
-		h1s.Config.Protocols.SetHTTP1(true)
-		h1s.Config.Protocols.SetUnencryptedHTTP2(true)
-		http2.ConfigureServer(h1s.Config, h2s)
-		h1s.Start()
+		h1s := httptest.NewServer(h2c.NewHandler(handler, h2s))
 		t.Cleanup(h1s.Close)
 
 		httpTransport := NewTransport()
@@ -905,14 +904,12 @@ func TestCallWithHTTP2(t *testing.T) {
 			},
 		)
 		h2s := &http2.Server{
+			NewWriteScheduler: func() http2.WriteScheduler {
+				return http2.NewPriorityWriteScheduler(nil)
+			},
 			IdleTimeout: defaultIdleConnTimeout,
 		}
-		h1s := httptest.NewUnstartedServer(handler)
-		h1s.Config.Protocols = new(http.Protocols)
-		h1s.Config.Protocols.SetHTTP1(true)
-		h1s.Config.Protocols.SetUnencryptedHTTP2(true)
-		http2.ConfigureServer(h1s.Config, h2s)
-		h1s.Start()
+		h1s := httptest.NewServer(h2c.NewHandler(handler, h2s))
 		t.Cleanup(h1s.Close)
 
 		httpTransport := NewTransport()
@@ -1760,4 +1757,35 @@ func TestIsolatedSchemaChange(t *testing.T) {
 	assert.NotEqual(t, plainOutbound.urlTemplate, tlsOutbound.urlTemplate)
 	assert.Equal(t, "http", plainOutbound.urlTemplate.Scheme)
 	assert.Equal(t, "https", tlsOutbound.urlTemplate.Scheme)
+}
+
+// A proxy or load balancer in the request path can answer with a plain HTTP
+// error that carries no Rpc-Status header. The outbound must then derive the
+// YARPC code from the HTTP status alone.
+func TestGetYARPCErrorFromResponseWithoutRPCHeaders(t *testing.T) {
+	tests := []struct {
+		statusCode int
+		wantCode   yarpcerrors.Code
+	}{
+		{statusCode: http.StatusRequestTimeout, wantCode: yarpcerrors.CodeDeadlineExceeded},
+		{statusCode: http.StatusBadGateway, wantCode: yarpcerrors.CodeUnavailable},
+		{statusCode: http.StatusServiceUnavailable, wantCode: yarpcerrors.CodeUnavailable},
+		{statusCode: http.StatusGatewayTimeout, wantCode: yarpcerrors.CodeDeadlineExceeded},
+	}
+
+	for _, tt := range tests {
+		t.Run(strconv.Itoa(tt.statusCode), func(t *testing.T) {
+			const body = "body"
+			response := &http.Response{
+				StatusCode: tt.statusCode,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}
+
+			_, err := getYARPCErrorFromResponse(&transport.Response{}, response, false)
+			require.Error(t, err)
+			assert.Equal(t, tt.wantCode, yarpcerrors.FromError(err).Code())
+			assert.Equal(t, body, yarpcerrors.FromError(err).Message())
+		})
+	}
 }

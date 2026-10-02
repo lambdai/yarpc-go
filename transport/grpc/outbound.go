@@ -21,7 +21,6 @@
 package grpc
 
 import (
-	"bytes"
 	"context"
 	"io/ioutil"
 	"strings"
@@ -139,7 +138,7 @@ func (o *Outbound) DirectCall(ctx context.Context, request *transport.Request) (
 		return nil, err
 	}
 	return &transport.Response{
-		Body:                 ioutil.NopCloser(bytes.NewReader(responseBody)),
+		Body:                 newBytesBody(responseBody),
 		BodySize:             len(responseBody),
 		Headers:              responseHeaders,
 		ApplicationError:     metadataToIsApplicationError(responseMD),
@@ -301,7 +300,7 @@ func invokeErrorToYARPCError(err error, responseMD metadata.MD) error {
 		message = ""
 	}
 
-	yarpcErr := intyarpcerrors.NewWithNamef(code, name, "%s", message)
+	yarpcErr := intyarpcerrors.NewWithNamef(code, name, message)
 	if details, err := marshalError(status); err != nil {
 		return err
 	} else if details != nil {

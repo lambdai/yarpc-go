@@ -349,7 +349,7 @@ func (o *Outbound) DirectCallOneway(ctx context.Context, treq *transport.Request
 		return nil, err
 	}
 	if err = res.Body.Close(); err != nil {
-		return nil, yarpcerrors.Newf(yarpcerrors.CodeInternal, "%s", err.Error())
+		return nil, yarpcerrors.Newf(yarpcerrors.CodeInternal, err.Error())
 	}
 	return time.Now(), nil
 }
@@ -387,7 +387,7 @@ func (o *Outbound) call(ctx context.Context, treq *transport.Request) (*transpor
 	// Service name match validation, return yarpcerrors.CodeInternal error if not match
 	if match, resSvcName := checkServiceMatch(treq.Service, response.Header); !match {
 		if err = response.Body.Close(); err != nil {
-			return nil, yarpcerrors.Newf(yarpcerrors.CodeInternal, "%s", err.Error())
+			return nil, yarpcerrors.Newf(yarpcerrors.CodeInternal, err.Error())
 		}
 		return nil, transport.UpdateSpanWithErr(span,
 			yarpcerrors.InternalErrorf("service name sent from the request "+
@@ -395,7 +395,7 @@ func (o *Outbound) call(ctx context.Context, treq *transport.Request) (*transpor
 	}
 
 	tres := &transport.Response{
-		Headers:          applicationHeaders.FromHTTPHeaders(response.Header, transport.NewHeaders()),
+		Headers:          applicationHeaders.FromHTTPHeaders(response.Header, transport.NewHeadersWithCapacity(len(response.Header))),
 		Body:             response.Body,
 		BodySize:         int(response.ContentLength),
 		ApplicationError: response.Header.Get(ApplicationStatusHeader) == ApplicationErrorStatus,
@@ -534,7 +534,7 @@ func (o *Outbound) withCoreHeaders(req *http.Request, treq *transport.Request, t
 	req.Header.Set(ServiceHeader, treq.Service)
 	req.Header.Set(ProcedureHeader, treq.Procedure)
 	if ttl != 0 {
-		req.Header.Set(TTLMSHeader, fmt.Sprintf("%d", ttl/time.Millisecond))
+		req.Header.Set(TTLMSHeader, strconv.FormatInt(int64(ttl/time.Millisecond), 10))
 	}
 	if treq.ShardKey != "" {
 		req.Header.Set(ShardKeyHeader, treq.ShardKey)
@@ -573,10 +573,10 @@ func getYARPCErrorFromResponse(tres *transport.Response, response *http.Response
 			var err error
 			details, err = ioutil.ReadAll(response.Body)
 			if err != nil {
-				return tres, yarpcerrors.Newf(yarpcerrors.CodeInternal, "%s", err.Error())
+				return tres, yarpcerrors.Newf(yarpcerrors.CodeInternal, err.Error())
 			}
 			if err := response.Body.Close(); err != nil {
-				return tres, yarpcerrors.Newf(yarpcerrors.CodeInternal, "%s", err.Error())
+				return tres, yarpcerrors.Newf(yarpcerrors.CodeInternal, err.Error())
 			}
 			// nil out body so that it isn't read later
 			tres.Body = nil
@@ -584,11 +584,11 @@ func getYARPCErrorFromResponse(tres *transport.Response, response *http.Response
 	} else {
 		contentsBytes, err := ioutil.ReadAll(response.Body)
 		if err != nil {
-			return nil, yarpcerrors.Newf(yarpcerrors.CodeInternal, "%s", err.Error())
+			return nil, yarpcerrors.Newf(yarpcerrors.CodeInternal, err.Error())
 		}
 		contents = string(contentsBytes)
 		if err := response.Body.Close(); err != nil {
-			return nil, yarpcerrors.Newf(yarpcerrors.CodeInternal, "%s", err.Error())
+			return nil, yarpcerrors.Newf(yarpcerrors.CodeInternal, err.Error())
 		}
 	}
 	// use the status code if we can't get a code from the headers
@@ -603,7 +603,6 @@ func getYARPCErrorFromResponse(tres *transport.Response, response *http.Response
 	yarpcErr := intyarpcerrors.NewWithNamef(
 		code,
 		response.Header.Get(ErrorNameHeader),
-		"%s",
 		strings.TrimSuffix(contents, "\n"),
 	).WithDetails(details)
 
@@ -671,7 +670,7 @@ func (o *Outbound) roundTrip(hreq *http.Request, treq *transport.Request, start 
 			RoutingKey:      hreq.Header.Get(RoutingKeyHeader),
 			RoutingDelegate: hreq.Header.Get(RoutingDelegateHeader),
 			CallerProcedure: hreq.Header.Get(CallerProcedureHeader),
-			Headers:         applicationHeaders.FromHTTPHeaders(hreq.Header, transport.Headers{}),
+			Headers:         applicationHeaders.FromHTTPHeaders(hreq.Header, transport.NewHeadersWithCapacity(len(hreq.Header))),
 		}
 	}
 

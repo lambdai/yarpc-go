@@ -183,6 +183,27 @@ func TestTransportRequestToMetadata(t *testing.T) {
 				}),
 			},
 		},
+		{
+			Name: "No application headers",
+			MD: metadata.Pairs(
+				CallerHeader, "example-caller",
+				ServiceHeader, "example-service",
+				ShardKeyHeader, "example-shard-key",
+				RoutingKeyHeader, "example-routing-key",
+				RoutingDelegateHeader, "example-routing-delegate",
+				CallerProcedureHeader, "example-caller-procedure",
+				EncodingHeader, "example-encoding",
+			),
+			TransportRequest: &transport.Request{
+				Caller:          "example-caller",
+				Service:         "example-service",
+				ShardKey:        "example-shard-key",
+				RoutingKey:      "example-routing-key",
+				RoutingDelegate: "example-routing-delegate",
+				CallerProcedure: "example-caller-procedure",
+				Encoding:        "example-encoding",
+			},
+		},
 	} {
 		t.Run(tt.Name, func(t *testing.T) {
 			md, err := transportRequestToMetadata(tt.TransportRequest)
@@ -253,7 +274,7 @@ func TestGetApplicationHeaders(t *testing.T) {
 				"rpc-service":         []string{"foo"}, // reserved header
 				"test-header-empty":   []string{},      // no value
 				"test-header-valid-1": []string{"test-value-1"},
-				"test-Header-Valid-2": []string{"test-value-2"},
+				"test-header-valid-2": []string{"test-value-2"},
 			},
 			wantHeaders: map[string]string{
 				"test-header-valid-1": "test-value-1",
@@ -400,6 +421,177 @@ func BenchmarkIsReserved(b *testing.B) {
 		b.Run(h, func(b *testing.B) {
 			for range b.N {
 				isReserved(h)
+			}
+		})
+	}
+}
+
+func BenchmarkMetadataToTransportRequest(b *testing.B) {
+	md := metadata.Pairs(
+		CallerHeader, "example-caller",
+		ServiceHeader, "example-service",
+		ShardKeyHeader, "example-shard-key",
+		RoutingKeyHeader, "example-routing-key",
+		RoutingDelegateHeader, "example-routing-delegate",
+		EncodingHeader, "raw",
+		CallerProcedureHeader, "example-caller-procedure",
+		"x-uber-source", "service-a",
+		"x-request-id", "abc-123",
+		"x-trace-id", "trace-456",
+		"x-custom-1", "val1",
+		"x-custom-2", "val2",
+	)
+
+	b.ResetTimer()
+	for range b.N {
+		_, _ = metadataToTransportRequest(md)
+	}
+}
+
+func BenchmarkGetApplicationHeaders(b *testing.B) {
+	md := metadata.MD{
+		"rpc-caller":    []string{"example-caller"},
+		"rpc-service":   []string{"example-service"},
+		"rpc-encoding":  []string{"raw"},
+		"x-uber-source": []string{"service-a"},
+		"x-request-id":  []string{"abc-123"},
+		"x-trace-id":    []string{"trace-456"},
+		"x-custom-1":    []string{"val1"},
+		"x-custom-2":    []string{"val2"},
+		"x-custom-3":    []string{"val3"},
+		"x-custom-4":    []string{"val4"},
+	}
+
+	b.ResetTimer()
+	for range b.N {
+		_, _ = getApplicationHeaders(md)
+	}
+}
+
+func BenchmarkAddApplicationHeaders(b *testing.B) {
+	headers := transport.HeadersFromMap(map[string]string{
+		"x-uber-source": "service-a",
+		"x-request-id":  "abc-123",
+		"x-trace-id":    "trace-456",
+		"x-custom-1":    "val1",
+		"x-custom-2":    "val2",
+	})
+
+	b.ResetTimer()
+	for range b.N {
+		md := metadata.New(nil)
+		_ = addApplicationHeaders(md, headers)
+	}
+}
+
+func TestDuplicateAcceptEncodingHeader(t *testing.T) {
+	t.Parallel()
+
+	// gRPC clients and proxies in the wild repeat grpc-accept-encoding instead
+	// of comma-joining it. That must not fail the request, while every other
+	// repeated header keeps erroring.
+	t.Run("metadataToTransportRequest", func(t *testing.T) {
+		t.Run("duplicate accept-encoding is tolerated", func(t *testing.T) {
+			md := metadata.MD{
+				CallerHeader:          []string{"example-caller"},
+				ServiceHeader:         []string{"example-service"},
+				EncodingHeader:        []string{"example-encoding"},
+				_acceptEncodingHeader: []string{"gzip", "identity"},
+			}
+
+			request, err := metadataToTransportRequest(md)
+			require.NoError(t, err)
+			assert.Equal(t, "gzip", request.Headers.Items()[_acceptEncodingHeader],
+				"first value wins for %s", _acceptEncodingHeader)
+		})
+
+		t.Run("single accept-encoding is unchanged", func(t *testing.T) {
+			md := metadata.MD{_acceptEncodingHeader: []string{"gzip"}}
+
+			request, err := metadataToTransportRequest(md)
+			require.NoError(t, err)
+			assert.Equal(t, "gzip", request.Headers.Items()[_acceptEncodingHeader])
+		})
+
+		t.Run("other duplicate headers still error", func(t *testing.T) {
+			md := metadata.MD{
+				_acceptEncodingHeader: []string{"gzip", "identity"},
+				"test-header-dup":     []string{"value-1", "value-2"},
+			}
+
+			_, err := metadataToTransportRequest(md)
+			require.Error(t, err)
+			assert.Equal(t, yarpcerrors.CodeInvalidArgument, yarpcerrors.FromError(err).Code())
+			assert.Contains(t, err.Error(), "header has more than one value: test-header-dup")
+		})
+	})
+
+	t.Run("getApplicationHeaders", func(t *testing.T) {
+		t.Run("duplicate accept-encoding is tolerated", func(t *testing.T) {
+			md := metadata.MD{
+				_acceptEncodingHeader: []string{"gzip", "identity"},
+				"test-header":         []string{"test-value"},
+			}
+
+			headers, err := getApplicationHeaders(md)
+			require.NoError(t, err)
+			assert.Equal(t, map[string]string{
+				_acceptEncodingHeader: "gzip",
+				"test-header":         "test-value",
+			}, headers.Items())
+		})
+
+		t.Run("other duplicate headers still error", func(t *testing.T) {
+			md := metadata.MD{
+				_acceptEncodingHeader: []string{"gzip", "identity"},
+				"test-header-dup":     []string{"value-1", "value-2"},
+			}
+
+			_, err := getApplicationHeaders(md)
+			require.Error(t, err)
+			assert.Equal(t, yarpcerrors.CodeInvalidArgument, yarpcerrors.FromError(err).Code())
+			assert.Contains(t, err.Error(), "header has more than one value: test-header-dup")
+		})
+	})
+}
+
+func BenchmarkTransportRequestToMetadata(b *testing.B) {
+	tests := []struct {
+		name  string
+		count int
+	}{
+		{name: "no_application_headers"},
+		{name: "typical_two", count: 2},
+		{name: "eight", count: 8},
+		{name: "dense_sixteen", count: 16},
+	}
+	headerKeys := []string{
+		"header-0", "header-1", "header-2", "header-3",
+		"header-4", "header-5", "header-6", "header-7",
+		"header-8", "header-9", "header-10", "header-11",
+		"header-12", "header-13", "header-14", "header-15",
+	}
+
+	for _, test := range tests {
+		b.Run(test.name, func(b *testing.B) {
+			headers := transport.NewHeadersWithCapacity(test.count)
+			for _, key := range headerKeys[:test.count] {
+				headers = headers.With(key, "value")
+			}
+			request := transport.Request{
+				Caller:          "caller",
+				Service:         "service",
+				ShardKey:        "shard",
+				RoutingKey:      "routing",
+				RoutingDelegate: "delegate",
+				Encoding:        "proto",
+				CallerProcedure: "caller-procedure",
+				Headers:         headers,
+			}
+
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				_, _ = transportRequestToMetadata(&request)
 			}
 		})
 	}

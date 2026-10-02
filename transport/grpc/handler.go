@@ -21,11 +21,8 @@
 package grpc
 
 import (
-	"bytes"
 	"strings"
 	"time"
-
-	"context"
 
 	"github.com/opentracing/opentracing-go"
 	"go.uber.org/yarpc"
@@ -34,6 +31,7 @@ import (
 	"go.uber.org/yarpc/internal/grpcerrorcodes"
 	"go.uber.org/yarpc/yarpcerrors"
 	"go.uber.org/zap"
+	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -194,7 +192,7 @@ func (h *handler) handleUnary(
 		return err
 	}
 
-	transportRequest.Body = bytes.NewReader(requestData)
+	transportRequest.Body = newBytesBody(requestData)
 	transportRequest.BodySize = len(requestData)
 
 	responseWriter := newResponseWriter()
